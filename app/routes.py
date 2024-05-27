@@ -1,11 +1,12 @@
 from app import app
 import requests
 from bs4 import BeautifulSoup
-from flask import render_template,request,redirect,url_for #sluzy do wywolania pliku html
+from flask import render_template,request,redirect,url_for, send_file #sluzy do wywolania pliku html
 import pandas as pd
-import numpy
+import numpy as np
 import json
 import os
+import io
 from app import utils
 
 #flask - serwer
@@ -26,6 +27,7 @@ def extract():
             page_dom=BeautifulSoup(response.text, "html.parser")
             opinions_count = utils.extract(page_dom, "a.product-review__link > span")
             if opinions_count:
+                product_name = utils.extract(page_dom, "")
                 url= f"https://www.ceneo.pl/{product_id}/opinie-1"
                 all_opinions = []
                 while (url):
@@ -54,15 +56,17 @@ def extract():
                     #print(json.dumps(all_opinions, indent=4, ensure_ascii=False))
                     with open(f"app/data/opinions/{product_id}.json", "w", encoding="UTF-8") as jf:
                         json.dump(all_opinions, jf, indent=4, ensure_ascii=False)
-                    opinions = pd.from_dict(all_opinions)
+                    opinions = pd.DataFrame.from_dict(all_opinions)
                     opinions.rating = opinions.rating.apply(lambda r: r.split("/")[0].replace(",","."),).astype(float)
                     opinions.recommendation = opinions.recommendation.apply(lambda r: "Brak" if r is None else r)
                     stats = {
-                    pros_count : opinions.pros.apply(lambda p: 1 if p else 0).sum(),
-                    cons_count : opinions.pros.apply(lambda p: 1 if p else 0).sum(),
-                    average_rating : opinions.rating.mean(),
-                    rating_distribution : opinions.rating.value_counts().reindex(np.arange(0,5.5,0.5), fill_value = 0),
-                    recommendations_distribution : opinions.recommendation.value_counts().reindex(["Polecam", "Nie polecam", "Brak"])
+                    "product_id" : product_id,
+                    "product_name" : product_name,
+                    "pros_count" : opinions.pros.apply(lambda p: 1 if p else 0).sum(),
+                    "cons_count" : opinions.pros.apply(lambda p: 1 if p else 0).sum(),
+                    "average_rating" : opinions.rating.mean(),
+                    "rating_distribution" : opinions.rating.value_counts().reindex(np.arange(0,5.5,0.5), fill_value = 0),
+                    "recommendations_distribution" : opinions.recommendation.value_counts().reindex(["Polecam", "Nie polecam", "Brak"]).to_dict()
                     }
                     with open(f"app/data/stats/{product_id}.json", "w", encoding="UTF-8") as jf:
                         json.dump(all_opinions, jf, indent=4, ensure_ascii=False)
@@ -76,7 +80,11 @@ def extract():
 
 @app.route('/products')
 def products():
-    products = [filename.split(".")[0] for filename in os.listdir("app/data/opinions")]
+    products_list = [filename.split(".")[0] for filename in os.listdir("app/data/opinions")]
+    products = []
+    for product_id in products_list :
+        with open(f"app/data/stats/{product_id}.json", "r", encoding="UTF-8") as jf:
+            products.append(json.load(jf))
     return render_template("products.html.jinja", products = products)
 
 @app.route('/author')
@@ -91,3 +99,18 @@ def product(product_id):
 @app.route('/hello/<name>')
 def hello(name="world"):
     return f"Hello, {name}!"
+
+@app.route('/product/download_json/<product_id>')
+def download_json(product_id):
+    return send_file(f"data/opinions/{product_id}.json", "text/json", as_attachment=True)
+
+@app.route('/product/download_csv/<product_id>')
+def download_csv(product_id):
+    opinions = pd.read_json(f"opinions/{product_id}.json")
+    buffer = io.BytesIO
+    opinions.to_csv(opinions.to_csv(sep=";",decimal=",",index=False).encode())
+    return send_file(buffer, "text/csv", as_attachment=True, download_name=f"{product_id}.csv")
+
+@app.route('/product/download_xlsx/<product_id>')
+def download_xlsx(product_id):
+    pass
